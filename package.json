@@ -1,0 +1,16 @@
+{
+  "name": "catalogue-api-tests",
+  "version": "1.0.0",
+  "description": "Black-box API tests for the catalogue service, run against a live deployment backed by real MongoDB",
+  "scripts": {
+    "test": "jest --testPathPattern=test/"
+  },
+  "jest": {
+    "testTimeout": 40000,
+    "reporters": ["default", "jest-junit"]
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "jest-junit": "^16.0.0"
+  }
+}
