@@ -1,0 +1,76 @@
+name: api-tests
+# GitHub Actions translation of this repo's Jenkinsfile, triggered remotely by
+# the catalogue CI reusable workflow (nodejs-eks-ci.yaml's 'trigger
+# catalogue-api-tests' step) the same way Jenkins used to `build job:` this.
+on:
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: 'K8s namespace the target catalogue deployment lives in'
+        required: false
+        default: 'roboshop-dev'
+      commit_id:
+        description: 'Commit SHA of the catalogue build under test (for traceability)'
+        required: false
+        default: ''
+      catalogue_url:
+        description: 'catalogue service URL to test against (resolved via kubectl if not provided)'
+        required: false
+        default: ''
+
+jobs:
+  api-tests:
+    runs-on:
+      group: roboshop
+      labels: nodejs-test
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: install-dependencies
+        run: npm install
+
+      - name: configure aws credentials
+        if: inputs.catalogue_url == ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # normally passed in by the caller (catalogue CI already resolved it
+      # right after the ArgoCD sync went healthy); only resolved here as a
+      # fallback for a manual workflow_dispatch run. Runner isn't on the
+      # cluster's VPC otherwise, so the fallback only works if the EKS API
+      # endpoint / node network is reachable (public endpoint + security
+      # group allow, or a self-hosted runner in-VPC)
+      - name: resolve-catalogue-endpoint
+        run: |
+          set -e
+          if [ -n "${{ inputs.catalogue_url }}" ]; then
+            echo "CATALOGUE_URL=${{ inputs.catalogue_url }}" >> "$GITHUB_ENV"
+          else
+            aws eks update-kubeconfig --name roboshop --region us-east-1
+            pod_ip=$(kubectl get pods -n "${{ inputs.namespace }}" -l project=roboshop,tier=backend,component=catalogue -o jsonpath='{.items[0].status.podIP}')
+            if [ -z "$pod_ip" ]; then
+              echo "No running catalogue pod found in namespace ${{ inputs.namespace }}"
+              exit 1
+            fi
+            echo "CATALOGUE_URL=http://${pod_ip}:8080" >> "$GITHUB_ENV"
+          fi
+
+      - name: api-tests
+        run: npm test
+
+      - name: upload junit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-tests-junit
+          path: junit.xml
+          if-no-files-found: ignore
